@@ -1,25 +1,27 @@
 import express, { Application, Request, Response } from 'express'
+import fetch from 'node-fetch'
 import * as line from '@line/bot-sdk'
-import * as Types from "@line/bot-sdk/lib/types";
-import {
-  Configuration,
-  OpenAIApi,
-  ChatCompletionRequestMessageRoleEnum,
-} from 'openai'
+import * as Types from '@line/bot-sdk/lib/types'
+// import {
+//   Configuration,
+//   OpenAIApi,
+//   ChatCompletionRequestMessageRoleEnum,
+// } from 'openai'
 
-const OPENAPI_SECRET = process.env.OPENAPI_SECRET || ''
+// const OPENAPI_SECRET = process.env.OPENAPI_SECRET || ''
 const CHANNELSECRET = process.env.CHANNELSECRET || ''
 const ACCESSTOKEN = process.env.ACCESSTOKEN || ''
+const CHATGPT_API = process.env.CHATGPT_API || ''
 
 const app: Application = express()
 // app.use(express.urlencoded({ extended: true }))
 // app.use(express.json())
 // app.use(cors())
 
-const clientConfig: line.ClientConfig= {
+const clientConfig: line.ClientConfig = {
   channelAccessToken: ACCESSTOKEN,
 }
-const middlewareConfig: line.MiddlewareConfig= {
+const middlewareConfig: line.MiddlewareConfig = {
   channelSecret: CHANNELSECRET,
 }
 
@@ -31,25 +33,33 @@ app.post(
   '/webhook',
   line.middleware(middlewareConfig),
   async (req: Request, res: Response) => {
-
     try {
       // イベントオブジェクトを取得
       const event: line.WebhookEvent = req.body.events[0]
 
-      // テキストメッセージの場合のみオウム返しをする
       if (event.type === 'message' && event.message.type === 'text') {
+        // テキストメッセージの場合
+
         // OpenAIにリクエストします
-        const reply = await callOpenai([
-          { role: 'user', content: event.message.text },
-        ])
-        if (!reply) {
-          throw new Error('An unexpected error occurred.')
+        // const reply = await callOpenai([
+        //   { role: 'user', content: event.message.text },
+        // ])
+        // if (!reply) {
+        //   throw new Error('An unexpected error occurred.')
+        // }
+
+        const userId = event.source.userId
+        if (!userId) {
+          throw new Error('An unexpected error has occurred.')
         }
 
-        // オウム返しするメッセージを返信する
+        // オリジナルAPIにクリエスとします。
+        const {message} = await callOriginalApi(event.message.text, userId)
+
+        // メッセージを返信する
         await client.replyMessage(event.replyToken, {
           type: 'text',
-          text: reply,
+          text: message,
         } as Types.Message)
       }
 
@@ -62,28 +72,51 @@ app.post(
 )
 
 // OpenAIにリクエストします。
-const callOpenai = async (mentionMessages: Record<never, never>[]) => {
-  const configuration = new Configuration({
-    apiKey: OPENAPI_SECRET,
+// const callOpenai = async (mentionMessages: Record<never, never>[]) => {
+//   const configuration = new Configuration({
+//     apiKey: OPENAPI_SECRET,
+//   })
+//   const openai = new OpenAIApi(configuration)
+//   const messages = [
+//     {
+//       role: ChatCompletionRequestMessageRoleEnum.System,
+//       content: 'あなたは有能なアシスタントです。',
+//     },
+//     ...mentionMessages,
+//   ]
+//   console.log('request to openai:', messages)
+//   // Chat completions APIを呼ぶ
+//   const response = await openai.createChatCompletion({
+//     model: 'gpt-3.5-turbo',
+//     // @ts-ignore
+//     messages,
+//   })
+//   const message = response.data.choices[0]?.message?.content
+//   console.log('response from openai:', message)
+//   return message
+// }
+
+const callOriginalApi = async (message: string, userId: string) => {
+  const body = JSON.stringify({
+    appId: 'lambda-linebot-openai',
+    sessionTime: 10 * 60 * 1000, // セッションを10分に指定
+    userKey: userId,
+    message: message,
   })
-  const openai = new OpenAIApi(configuration)
-  const messages = [
-    {
-      role: ChatCompletionRequestMessageRoleEnum.System,
-      content: 'あなたは有能なアシスタントです。',
+  const response = await fetch(CHATGPT_API, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET,PUT,POST,DELETE',
+      'Access-Control-Allow-Headers':
+        'Content-Type, Authorization, access_token',
     },
-    ...mentionMessages,
-  ]
-  console.log('request to openai:', messages)
-  // Chat completions APIを呼ぶ
-  const response = await openai.createChatCompletion({
-    model: 'gpt-3.5-turbo',
-    // @ts-ignore
-    messages,
+    body,
   })
-  const message = response.data.choices[0]?.message?.content
-  console.log('response from openai:', message)
-  return message
+  const text = await response.text();
+  const json: {status: number, message: string} = JSON.parse(text);
+  return json;
 }
 
 export { app }
