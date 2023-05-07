@@ -2,21 +2,18 @@ import express, { Application, Request, Response } from 'express'
 import fetch from 'node-fetch'
 import * as line from '@line/bot-sdk'
 import * as Types from '@line/bot-sdk/lib/types'
-// import {
-//   Configuration,
-//   OpenAIApi,
-//   ChatCompletionRequestMessageRoleEnum,
-// } from 'openai'
+import {
+  Configuration,
+  OpenAIApi,
+  ChatCompletionRequestMessageRoleEnum,
+} from 'openai'
 
-// const OPENAPI_SECRET = process.env.OPENAPI_SECRET || ''
+const OPENAPI_SECRET = process.env.OPENAPI_SECRET || ''
 const CHANNELSECRET = process.env.CHANNELSECRET || ''
 const ACCESSTOKEN = process.env.ACCESSTOKEN || ''
 const CHATGPT_API = process.env.CHATGPT_API || ''
 
 const app: Application = express()
-// app.use(express.urlencoded({ extended: true }))
-// app.use(express.json())
-// app.use(cors())
 
 const clientConfig: line.ClientConfig = {
   channelAccessToken: ACCESSTOKEN,
@@ -37,31 +34,53 @@ app.post(
       // イベントオブジェクトを取得
       const event: line.WebhookEvent = req.body.events[0]
 
-      if (event.type === 'message' && event.message.type === 'text') {
-        // テキストメッセージの場合
+      if (event.type !== 'message' || event.message.type !== 'text') {
+        // テキストメッセージでない場合は何もしない
+        return
+      }
+      let replyUser
+      if (event.source.type === "group") {
+        const botInfo = await client.getBotInfo()
+        if (!event.message.text.match(new RegExp(botInfo.displayName + "\\s*", "s"))) {
+          // グループチャットの場合は、メンションがついていない場合は何もしない
+          return 
+        }
+        replyUser = event.source.userId;
+      }
 
-        // OpenAIにリクエストします
-        // const reply = await callOpenai([
-        //   { role: 'user', content: event.message.text },
-        // ])
-        // if (!reply) {
-        //   throw new Error('An unexpected error occurred.')
-        // }
-
+      // テキストメッセージの場合
+      let message
+      if (CHATGPT_API) {
         const userId = event.source.userId
         if (!userId) {
           throw new Error('An unexpected error has occurred.')
         }
 
-        // オリジナルAPIにクリエスとします。
-        const {message} = await callOriginalApi(event.message.text, userId)
+        // オリジナルAPIにリクエストとします。
+        const data = await callOriginalApi(event.message.text, userId)
+        message = data.message
+        
+      } else {
 
-        // メッセージを返信する
-        await client.replyMessage(event.replyToken, {
-          type: 'text',
-          text: message,
-        } as Types.Message)
+        // OpenAIにリクエストします
+        const reply = await callOpenai([
+          { role: 'user', content: event.message.text },
+        ])
+        if (!reply) {
+          throw new Error('An unexpected error occurred.')
+        }
+        message = reply
       }
+
+      if (replyUser) {
+        message = `@${replyUser} ${message}`
+      }
+
+      // メッセージを返信する
+      await client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: message,
+      } as Types.Message)
 
       res.sendStatus(200)
     } catch (e) {
@@ -72,29 +91,29 @@ app.post(
 )
 
 // OpenAIにリクエストします。
-// const callOpenai = async (mentionMessages: Record<never, never>[]) => {
-//   const configuration = new Configuration({
-//     apiKey: OPENAPI_SECRET,
-//   })
-//   const openai = new OpenAIApi(configuration)
-//   const messages = [
-//     {
-//       role: ChatCompletionRequestMessageRoleEnum.System,
-//       content: 'あなたは有能なアシスタントです。',
-//     },
-//     ...mentionMessages,
-//   ]
-//   console.log('request to openai:', messages)
-//   // Chat completions APIを呼ぶ
-//   const response = await openai.createChatCompletion({
-//     model: 'gpt-3.5-turbo',
-//     // @ts-ignore
-//     messages,
-//   })
-//   const message = response.data.choices[0]?.message?.content
-//   console.log('response from openai:', message)
-//   return message
-// }
+const callOpenai = async (mentionMessages: Record<never, never>[]) => {
+  const configuration = new Configuration({
+    apiKey: OPENAPI_SECRET,
+  })
+  const openai = new OpenAIApi(configuration)
+  const messages = [
+    {
+      role: ChatCompletionRequestMessageRoleEnum.System,
+      content: 'あなたは有能なアシスタントです。',
+    },
+    ...mentionMessages,
+  ]
+  console.log('request to openai:', messages)
+  // Chat completions APIを呼ぶ
+  const response = await openai.createChatCompletion({
+    model: 'gpt-3.5-turbo',
+    // @ts-ignore
+    messages,
+  })
+  const message = response.data.choices[0]?.message?.content
+  console.log('response from openai:', message)
+  return message
+}
 
 const callOriginalApi = async (message: string, userId: string) => {
   const body = JSON.stringify({

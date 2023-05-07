@@ -37,6 +37,7 @@ Resources:
         Variables:
           CHANNELSECRET: ""
           ACCESSTOKEN: ""
+          OPENAPI_SECRET: ""
           CHATGPT_API: ""
       Events:
         Api:
